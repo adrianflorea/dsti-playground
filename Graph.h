@@ -13,6 +13,8 @@ public:
 	void removeEdge(const std::string&, const std::string&);
 	int getVerticesCount() const;
 	int getEdgesCount() const;
+	int getInDegree(const std::string&) const;
+	int getOutDegree(const std::string&) const;
 	std::list<std::string> getNeighbourhood(const std::string&) const;
 	bool isEdge(const std::string&, const std::string&) const;
 	bool areConnected(const std::string&, const std::string&) const;

@@ -55,6 +55,27 @@ int Graph::getEdgesCount() const
 	return edgesCount;
 }
 
+int Graph::getInDegree(const std::string& vertex) const
+{
+	auto inDegree = 0;
+	for (const auto& iterator : adjacencyList)
+	{
+		inDegree += std::count(iterator.second.begin(), iterator.second.end(), vertex);
+	}
+	return inDegree;
+}
+
+int Graph::getOutDegree(const std::string& vertex) const
+{
+	auto outDegree = 0;
+	auto& found = adjacencyList.find(vertex);
+	if (found != adjacencyList.end()) 
+	{
+		outDegree = found->second.size();
+	}
+	return outDegree;
+}
+
 std::list<std::string> Graph::getNeighbourhood(const std::string& vertex) const
 {
 	std::list<std::string> neighbourhood;
