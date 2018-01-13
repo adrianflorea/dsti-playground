@@ -99,7 +99,7 @@ bool Graph::isEdge(const std::string& origin, const std::string& destination) co
 	return false;
 }
 
-bool Graph::areConnected(const std::string& vertex1, const std::string& vertex2) const
+bool Graph::areConnected(const std::string& origin, const std::string& destination) const
 {
 	// BFS-based implementation
 
@@ -110,8 +110,8 @@ bool Graph::areConnected(const std::string& vertex1, const std::string& vertex2)
 		visited.emplace(iterator.first, false);
 	}
 
-	visited[vertex1] = true;
-	queue.push(vertex1);
+	visited[origin] = true;
+	queue.push(origin);
 
 	while (!queue.empty())
 	{
@@ -124,7 +124,7 @@ bool Graph::areConnected(const std::string& vertex1, const std::string& vertex2)
 		// (const required by the const signature of "areConnected")
 		for (const auto& neighbour : adjacencyList.at(v))
 		{
-			if (neighbour == vertex2)
+			if (neighbour == destination)
 				return true;
 			if (!visited[neighbour])
 			{
@@ -136,13 +136,84 @@ bool Graph::areConnected(const std::string& vertex1, const std::string& vertex2)
 	return false;
 }
 
+std::list<std::string> Graph::getShortestPath(const std::string& origin, const std::string& destination) const
+{
+	if (!areConnected(origin, destination))
+	{
+		throw std::invalid_argument("The vertices \'" + origin + "\' and \'" + destination + "\' are not connected!");
+	}
+	
+	std::unordered_map<std::string, int> distance;
+	std::unordered_map<std::string, std::string> predecessor;
+	for (const auto& iterator : adjacencyList)
+	{
+		// the return value of std::numeric_limits<int>::infinity() is 0
+		// so I use std::numeric_limits<int>::max() instead
+		distance.emplace(iterator.first, std::numeric_limits<int>::max());
+		predecessor.emplace(iterator.first, "");
+	}
+
+	// BFS is Dijkstra for unweighted graphs with 
+	// std::queue (FIFO) instead of std::priority_queue
+	// implemented here as Dijkstra as a learning exercise 
+	
+	using QueueItem = std::pair<std::string, int>;
+	auto& greater = [](const QueueItem& item1, const QueueItem& item2) {return item1.second > item2.second; };
+	std::priority_queue<QueueItem, std::vector<QueueItem>, decltype(greater)> priorityQueue(greater);
+
+	distance[origin] = 0;
+	priorityQueue.push(std::make_pair(origin, distance[origin]));
+
+	while (!priorityQueue.empty())
+	{
+		std::string u = priorityQueue.top().first;
+		priorityQueue.pop();
+
+		for (const auto& v : adjacencyList.at(u))
+		{
+			// unweighted graph means all "weights" are 1
+			if(distance[u] + 1 < distance[v])
+			{
+				distance[v] = distance[u] + 1;
+				predecessor[v] = u;
+				// stop traversal
+				if (v == destination)
+				{
+					// clear the queue
+					while (!priorityQueue.empty())
+					{
+						priorityQueue.pop();
+					}
+					break;
+				}
+				priorityQueue.push(std::make_pair(v, distance[v]));
+			}
+		}
+	}
+
+	std::list<std::string> shortestPath;
+	auto vertex = destination;
+	shortestPath.push_back(vertex);
+	while (vertex != origin)
+	{
+		shortestPath.push_back(vertex = predecessor[vertex]);
+	}
+	shortestPath.reverse();
+	return shortestPath;
+}
+
+void Graph::printVertices(const std::list<std::string>& vertices) const
+{
+	std::copy(vertices.begin(), vertices.end(), 
+		std::ostream_iterator<std::string>(std::cout, " "));
+	std::cout << std::endl;
+}
+
 void Graph::printAdjacencies() const
 {
 	for (const auto& iterator : adjacencyList)
 	{
 		std::cout << iterator.first << ":";
-		std::copy(iterator.second.begin(), iterator.second.end(), 
-			std::ostream_iterator<std::string>(std::cout, " "));
-		std::cout << std::endl;
+		printVertices(iterator.second);
 	}
 }

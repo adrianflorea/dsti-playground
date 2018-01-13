@@ -18,6 +18,8 @@ public:
 	std::list<std::string> getNeighbourhood(const std::string&) const;
 	bool isEdge(const std::string&, const std::string&) const;
 	bool areConnected(const std::string&, const std::string&) const;
+	std::list<std::string> getShortestPath(const std::string& origin, const std::string& destination) const;
+	void printVertices(const std::list<std::string>&) const;
 	void printAdjacencies() const;
 private:
 	using AdjacencyList = std::unordered_map<std::string, std::list<std::string>>;
