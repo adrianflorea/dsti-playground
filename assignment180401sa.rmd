@@ -1,0 +1,357 @@
+---
+title: "Survival Analysis Project @ DSTI, Cohort A17"
+author: "Adrian Florea"
+date: "April 1st, 2018"
+output:
+  word_document:
+    df_print: kable
+    highlight: tango
+  pdf_document:
+    df_print: kable
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Project Requirements (by Dr. Antonio Di Narzo)
+
+Analize a right-censored survival dataset of your choice and apply some of the methods introduced in this course: 
+
+* nonparametric estimation
+* Logrank test
+* Cox regression
+* machine learning + validation.
+
+Produce a PDF report with:
+
+* brief description of the data
+* basic descriptive statistics:
+    + sample size
+    + variables min/max
+    + categorical variables distribution, etc.
+* questions asked
+* methods used
+* results
+
+Please include all R code either in an appendix or inline with
+the main report.
+
+# Corruption of the Romanian Lower House Members in the Legislative Session 2012-2016, Studied with Survival Analysis Methods
+
+## Project description
+
+The project requirements suggests the choice between two datasets, the **pbc** dataset of the [survival](https://cran.r-project.org/web/packages/survival/) package, and the [GSE14333](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE14333) dataset attached on the Moodle [project](https://moodle.dsti.institute/mod/assign/view.php?id=2038) page but, as an alternative choice, encourages the student to "*pick any other dataset with right censored survival data*". I considered the latter more challenging so I chose to create my own right censored survival data, thus verifying first-hand the *Pareto rule* that in a data science project, 80% of the project timeline is spent for data preparation, and only 20% of the timeline for data analysis :-)
+
+The project studies the corruption of the Romanian Lower House members during the legislative session 2012-2016, using some survival analysis methods.
+
+## Data description
+
+Part of the data, the list of all the members of the Romanian Lower House, elected for the legislative session 2012-2016, was extracted by parsing this official page [http://www.cdep.ro/pls/parlam/structura2015.de?leg=2012](http://www.cdep.ro/pls/parlam/structura2015.de?leg=2012), using the following function called `get_lower_house`:
+
+```{r, eval=FALSE}
+get_lower_house <- function(legislative_session_start, table_id) {
+  if(missing(table_id)){
+    df1 <- get_lower_house(legislative_session_start, 2)
+    df2 <- get_lower_house(legislative_session_start, 3)
+    lower_house <- bind_rows(df1, df2)
+    return(lower_house)
+  }
+  else
+  {
+    lower_house <- read_html(
+      paste0("http://www.cdep.ro/pls/parlam/structura2015.de?leg=", 
+      legislative_session_start))
+    lower_house <- lower_house %>% html_table(header=TRUE, fill = TRUE)
+    lower_house <- lower_house %>% extract2(table_id) 
+    
+    lower_house.deputy_full_name <- lower_house %>% 
+      use_series("Nume si prenume")
+    lower_house.deputy_full_name <- lower_house.deputy_full_name %>% 
+      tail(-1)
+    lower_house.deputy_full_name <- lower_house.deputy_full_name %>% 
+      str_split_fixed(" ", 2)
+    lower_house.deputy_family_name <- lower_house.deputy_full_name[,1]
+    lower_house.deputy_given_name <- lower_house.deputy_full_name[,2]
+    
+    lower_house.constituency <- lower_house %>% 
+      use_series("Circumscriptia electorala")
+    lower_house.constituency <- lower_house.constituency %>% 
+      tail(-1)
+    lower_house.constituency <- lower_house.constituency %>% 
+      str_split_fixed(" / ", 2)
+    lower_house.constituency <- lower_house.constituency[,2]
+    
+    lower_house.party <- lower_house %>% 
+      use_series("Membru din")
+    lower_house.party <- lower_house.party %>% 
+      tail(-1)
+    lower_house.party[lower_house.party == ""] <- "Minoritati"
+    
+    lower_house <- bind_cols(
+      deputy_given_name = lower_house.deputy_given_name,
+      deputy_family_name = lower_house.deputy_family_name,
+      party = lower_house.party,
+      constituency = lower_house.constituency)
+    return(lower_house)
+  }
+}
+```
+
+The function is meant to be called without passing the second argument, `table_id`, that is used only internally, to get a specific table from the page (the complete list is obtained from the `table_id`s `2` and `3`) - so it's enough to pass the starting year of the legislative session:
+
+```{r, eval=FALSE}
+lower_house <- get_lower_house("2012")
+```
+
+The official site is built such as the URL of the page doesn't change from a legislative session to the other (that means it remains `structura2015.de` for all sessions), only the value of the query parameter `leg` will change (`leg=2012`).
+
+The implementation results clean and clear thanks to the powerful packages used in this phase of data preparation:
+
+```{r, eval=FALSE}
+library("rvest")
+library("dplyr")
+library("magrittr")
+library("stringr")
+```
+
+After this extraction of the complete list of members, the obtained `lower_house` data frame required some minor manual interventions like below, for members with both multiple given names and multiple family names, and for one duplicate:
+
+```{r, eval=FALSE}
+column_names <- c("deputy_given_name", "deputy_family_name")
+
+column_values <- c("Bogdan Nicolae", "Niculescu Duvaz")
+filter <- 
+  lower_house$deputy_given_name == "Duvaz Bogdan Nicolae" & 
+  lower_house$deputy_family_name == "Niculescu"
+lower_house[filter, ][column_names] <- column_values
+
+column_values <- c("Laurentiu", "Tigaeru Rosca")
+filter <- 
+  lower_house$deputy_given_name == "Rosca Laurentiu" & 
+  lower_house$deputy_family_name == "Tigaeru"
+lower_house[filter, ][column_names] <- column_values
+
+column_values <- c("Monica Maria", "Iacob Ridzi")
+filter <- 
+  lower_house$deputy_given_name == "Ridzi Monica Maria" & 
+  lower_house$deputy_family_name == "Iacob"
+lower_house[filter, ][column_names] <- column_values
+
+column_values <- c("Oana", "Niculescu-Mizil Stefanescu")
+filter <- 
+  lower_house$deputy_given_name == "Stefanescu Oana" & 
+  lower_house$deputy_family_name == "Niculescu-Mizil"
+lower_house[filter, ][column_names] <- column_values
+
+# He changed the party so he appeared twice on the website
+# Below, the row corresponding to his first party is deleted
+lower_house <- lower_house[!(
+  lower_house$deputy_given_name =="Ovidiu Ioan" & 
+  lower_house$deputy_family_name == "Silaghi" &
+  lower_house$party == "PNL"),]
+```
+
+The data frame is ready now to be saved in a CSV file:
+
+```{r, eval=FALSE}
+lower_house_file <- "C:/dsti/sa/prj/assignment180401sa.csv"
+write.table(lower_house, lower_house_file, row.names = FALSE)
+```
+
+We have obtained a clean and complete list of all members of the Romanian Lower House, elected for the legislative session 2012-2016:
+
+```{r}
+head(lower_house)
+```
+
+with a minimal structure:
+```{r}
+str(lower_house)
+```
+
+Some of them, have been prosecuted during the following years. Gathering the corresponding data was a very laborious, manual task, started from this [Wikipedia page](https://ro.wikipedia.org/wiki/List%C4%83_de_politicieni_rom%C3%A2ni_implica%C8%9Bi_%C3%AEn_scandaluri_publice#Deputa%C8%9Bi) and continued with many hundreds of web searches on various online news websites. It resulted a manual built CSV file of this structure:
+
+```{r}
+str(lower_house_corruption)
+```
+
+This data frame, `lower_house_corruption`, is going to be merged with `lower_house`. Here is a glimpse of `lower_house_corruption`:
+
+```{r}
+head(lower_house_corruption)
+```
+
+The merge between the two is immediate:
+
+```{r, eval=FALSE}
+df <- merge(x = lower_house, y = lower_house_corruption, 
+  by = c("deputy_given_name", "deputy_family_name"), 
+  all.x = TRUE)
+```
+
+It results a new data frame, `df`, on which we will conduct the study. We need to do some data preparation on it, in order to be ready for the survival analysis. For example, let's start with a simple cast to the `Date` type for the three columns representing dates:
+
+```{r, eval=FALSE}
+date_format <- "%d-%m-%Y"
+df$complaint_date <- as.Date(df$complaint_date, format = date_format)
+df$procecution_start_date <- as.Date(df$procecution_start_date, format = date_format)
+df$final_decision_date <- as.Date(df$final_decision_date, format = date_format)
+```
+
+We need to transform each date in a number, representing the number of days since the elections (in our case, the elections were held on *December 9th, 2012*). Now that these columns are `Date`s instead of `character`, such transformation can be done with a simple function like:
+
+```{r, eval=FALSE}
+get_session_days <- function(date){
+  election_date <- as.Date("9-12-2012", format = date_format)
+  return(ifelse(date > election_date, date-election_date, NA))
+}
+```
+
+but the *failure time* is more complicated, because of the various `NA` in the three dates columns - we need to calculate the *earliest available* time (that means not `NA`) from *complaint*, *prosecution start*, and *final decision* moments, whichever is available! Here is the implementation:
+
+```{r, eval=FALSE}
+get_failure_time <- function(...){
+  failures <- c(...)
+  return(ifelse(length(which(failures > 0)) != 0,
+                min(failures[which(failures > 0)]),
+                NA))
+}
+```
+
+It will be applied on *days*, not `Date`s, so we need before to create three new columns for *days*:
+
+```{r, eval=FALSE}
+df <- df %>%
+  mutate(complaint_session_days = get_session_days(complaint_date)) %>%
+  mutate(procecution_start_session_days = get_session_days(procecution_start_date)) %>%
+  mutate(final_decision_session_days = get_session_days(final_decision_date))
+
+```
+
+Again, thanks to the `dplyr` package, everything is smooth and clean. The same applies also to the following transformation (pay attention to the `rowwise()`!)
+
+```{r, eval=FALSE}
+df <- df %>% 
+  rowwise() %>%
+  mutate(failure_time = get_failure_time(
+    complaint_session_days, 
+    procecution_start_session_days, 
+    final_decision_session_days))
+```
+
+Without this elegant `rowwise()`, the code would have definitely lost the clarity. In the `get_failure_time` implementation I preferred the three dots ellipsis in order to have a cleaner call of `get_failure_time` inside the `mutate` (without the three dots ellipsis, we should have passed a vector of the three columns).
+
+Now, the data frame looks like that:
+
+```{r}
+head(df)
+```
+
+with the structure:
+
+```{r}
+str(df)
+```
+
+## Basic descriptive statistics
+
+In order to obtain some basic descriptive statistics, we don't like the `character` type of some columns, we need to convert them in `factor`s:
+
+```{r, eval=FALSE}
+df$party <- as.factor(df$party)
+df$constituency <- as.factor(df$constituency)
+df$verdict <- as.factor(df$verdict)
+df$crime <- as.factor(df$crime)
+df$sentencing <- as.factor(df$sentencing)
+```
+
+In the basic descriptive statistics we don't need the original *_date* columns so we can request the summary for all columns except them:
+
+```{r}
+summary(df %>% select(-complaint_date, -procecution_start_date, -final_decision_date))
+```
+
+We notice that:
+
+* from a total of 416 members of the Lower House, 9+32+1+3=45, (almost 11%) have been prosecuted;
+* from a total of 45 members prosecuted, 32 have been convicted (almost 72%)
+* the median of the imprisonment received is 1 year and a half but only 9 out of 45 (20%) have executed effectively the imprisonment
+* the most frequent crime is the *conflict of interest*
+
+Let's see the distribution of the prosecuted members, grouped by their parties (again, look how natural such a query can be, thanks to the `dplyr` package):
+
+```{r}
+df %>% 
+  filter(!is.na(verdict)) %>% 
+  group_by(party) %>% 
+  tally() %>% 
+  arrange(desc(n))
+```
+
+result that confirms the "intuition" that the governing parties are those most corrupt. Moreover, this distribution, is very close to the "natural" distribution of the parties:
+
+```{r}
+df %>% 
+  group_by(party) %>% 
+  tally() %>% 
+  arrange(desc(n))
+```
+
+with the significant exception of the independents (*neafiliat* in the data): only 1 out of 27 independents has been prosecuted.
+
+## Censoring
+
+We can think at the *right censoring* time as the day of the next elections, that means December 11th, 2016:
+
+```{r}
+right_censoring <- get_session_days(as.Date("11-12-2016", format = date_format))
+```
+
+that is 1463 days. With this value we are censoring the `df` data frame:
+
+```{r, eval=FALSE}
+df <- df %>%
+  mutate(censored = ifelse(is.na(failure_time), 
+    0, 
+    ifelse(failure_time < right_censoring, 1, 0)))
+```
+
+## Survival estimators
+
+It's easy now to use the various estimators from the `survival` package:
+
+```{r, eval=FALSE}
+library(survival)
+```
+
+For example:
+
+### Kaplan-Meier estimator
+
+The `Surv` function produce a special structure that is used by the `survfit` estimation function. The result of the estimation can be plotted:
+
+```{r}
+fit_km <- survfit(Surv(failure_time, censored) ~ 1 , data = df)
+plot(fit_km)
+```
+
+or "summarized" with:
+
+```{r, eval=FALSE}
+summary(fit_km)
+```
+
+### Nelson-AAlen estimator
+
+encountered also as the Fleming-Harrington estimator (`type="fh"`), but also as the Nelson-Altschuler estimator:
+
+```{r}
+fit_na <- survfit(Surv(failure_time, censored) ~ 1 , data = df, type="fh")
+plot(fit_na)
+```
+
+```{r}
+summary(fit_na)
+```
